@@ -1,1 +1,80 @@
 
+name: Generate APK Metadata
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  extract-metadata:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Download APK from Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Fetch the APK URL from the release assets
+          APK_URL=$(curl -sH "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}" | \
+            jq -r '.assets[] | select(.name | endswith(".apk")) | .url')
+          
+          if [ -z "$APK_URL" ] || [ "$APK_URL" == "null" ]; then
+            echo "No APK found in release assets."
+            exit 1
+          fi
+
+          echo "Downloading APK from $APK_URL..."
+          curl -sL -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/octet-stream" -o app.apk "$APK_URL"
+
+      - name: Extract Metadata
+        id: metadata
+        run: |
+          # Extract metadata using aapt
+          BADGE=$(aapt dump badging app.apk)
+          
+          PACKAGE_NAME=$(echo "$BADGE" | grep "package: name=" | awk -F"'" '{print $2}')
+          VERSION_CODE=$(echo "$BADGE" | grep "package: name=" | awk -F"'" '{print $4}')
+          VERSION_NAME=$(echo "$BADGE" | grep "package: name=" | awk -F"'" '{print $6}')
+          APP_NAME=$(echo "$BADGE" | grep "application-label:" | head -n 1 | awk -F"'" '{print $2}')
+          
+          # Compute SHA-256
+          SHA256=$(sha256sum app.apk | awk '{print $1}')
+          
+          # Fetch the exact download URL of the APK asset
+          DOWNLOAD_URL=$(curl -sH "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}" | \
+            jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url')
+
+          echo "Extracted Data:"
+          echo "App Name: $APP_NAME"
+          echo "Package: $PACKAGE_NAME"
+          echo "Version: $VERSION_NAME ($VERSION_CODE)"
+          echo "SHA256: $SHA256"
+
+          # Write to JSON
+          cat <<EOF > release-metadata.json
+          {
+            "appName": "$APP_NAME",
+            "packageName": "$PACKAGE_NAME",
+            "versionName": "$VERSION_NAME",
+            "versionCode": $VERSION_CODE,
+            "sha256": "$SHA256",
+            "downloadUrl": "$DOWNLOAD_URL"
+          }
+          EOF
+
+      - name: Upload Metadata JSON to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-metadata.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
