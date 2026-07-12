@@ -36,8 +36,12 @@ jobs:
       - name: Extract Metadata
         id: metadata
         run: |
+          # Find the latest aapt binary in the pre-installed Android SDK
+          AAPT_PATH=$(find $ANDROID_HOME/build-tools -name "aapt" | sort -V | tail -n 1)
+          echo "Using AAPT at: $AAPT_PATH"
+          
           # Extract metadata using aapt
-          BADGE=$(aapt dump badging app.apk)
+          BADGE=$($AAPT_PATH dump badging app.apk)
           
           PACKAGE_NAME=$(echo "$BADGE" | grep "package: name=" | awk -F"'" '{print $2}')
           VERSION_CODE=$(echo "$BADGE" | grep "package: name=" | awk -F"'" '{print $4}')
@@ -76,4 +80,3 @@ jobs:
           files: release-metadata.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
